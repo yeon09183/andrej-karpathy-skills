@@ -1,0 +1,1301 @@
+<roblox version="4">
+  <Item class="ReplicatedStorage" referent="0">
+    <Properties>
+      <string name="Name">ReplicatedStorage</string>
+    </Properties>
+    <Item class="Folder" referent="1">
+      <Properties>
+        <string name="Name">Shared</string>
+      </Properties>
+      <Item class="ModuleScript" referent="2">
+        <Properties>
+          <string name="Name">Config</string>
+          <string name="Source"><![CDATA[-- 게임 전체 수치. 밸런스 조정은 이 파일만 고치면 된다.
+local Config = {}
+
+Config.PLOT_COUNT = 8 -- 서버 최대 인원과 같아야 한다
+Config.SLOTS = 10 -- 좌판 하나에 놓을 수 있는 요괴 수
+Config.START_RUMOR = 50
+Config.WALK_SPEED = 16
+
+-- 골목(컨베이어)
+Config.SPAWN_INTERVAL = 2.5 -- 초
+Config.WALKER_SPEED = 10 -- 스터드/초
+
+-- 결계
+Config.LOCK_DURATION = 40
+Config.LOCK_COOLDOWN = 70 -- 결계를 친 시점부터 다시 칠 수 있을 때까지 (30초의 빈틈)
+
+-- 새벽 종
+Config.BELL_INTERVAL = 15 * 60
+Config.BELL_DURATION = 30
+
+-- 훔치기 / 전투
+Config.STEAL_HOLD = 1.5
+Config.FAN_RANGE = 8
+Config.FAN_COOLDOWN = 1
+Config.KNOCKBACK = 60
+Config.BOUNTY_RATE = 0.1 -- 훔친 요괴 가격 대비 현상금
+
+-- 경제
+Config.SELL_RATE = 0.5
+Config.FUSE_COUNT = 3 -- 같은 요괴 몇 마리를 합치는가
+Config.FUSE_INCOME_MULT = 4 -- 단계가 오를 때마다 수익 배율
+Config.MAX_LEVEL = 3
+Config.REBIRTH_BASE_COST = 100000
+Config.REBIRTH_COST_GROWTH = 8
+Config.REBIRTH_BONUS = 0.5 -- 환생 1회당 수익 배율 증가
+
+Config.AUTOSAVE_INTERVAL = 120
+
+-- weight: 골목 등장 가중치 (0이면 일반 등장 없음)
+-- carrySpeed: 업고 뛸 때 이동속도 배율
+-- minRebirth: 영입에 필요한 환생 횟수 (훔치는 건 제한 없음)
+Config.RARITIES = {
+	Common = { name = "흔함", weight = 60, carrySpeed = 0.9, minRebirth = 0, size = 3, color = { 170, 170, 170 } },
+	Rare = { name = "희귀", weight = 25, carrySpeed = 0.8, minRebirth = 0, size = 3.5, color = { 80, 160, 255 } },
+	Epic = { name = "영웅", weight = 10, carrySpeed = 0.7, minRebirth = 0, size = 4, color = { 180, 90, 255 } },
+	Legendary = { name = "전설", weight = 4, carrySpeed = 0.55, minRebirth = 0, size = 4.5, color = { 255, 170, 40 } },
+	Mythic = { name = "신화", weight = 1, carrySpeed = 0.45, minRebirth = 1, size = 5.5, color = { 255, 70, 90 } },
+	Secret = { name = "비밀", weight = 0, carrySpeed = 0.4, minRebirth = 2, size = 6, color = { 20, 20, 30 } },
+}
+Config.RARITY_ORDER = { "Common", "Rare", "Epic", "Legendary", "Mythic", "Secret" }
+
+-- 새벽 종이 울릴 때만 등장하는 등급
+Config.BELL_RARITY = "Secret"
+
+Config.YOKAI = {
+	{ id = "umbrella", name = "우산 도깨비", rarity = "Common", price = 25, income = 1 },
+	{ id = "dust", name = "먼지 뭉치", rarity = "Common", price = 60, income = 3 },
+	{ id = "lantern", name = "등불 귀신", rarity = "Common", price = 150, income = 6 },
+	{ id = "tanuki", name = "떡 너구리", rarity = "Rare", price = 500, income = 15 },
+	{ id = "broom", name = "빗자루 정령", rarity = "Rare", price = 1200, income = 32 },
+	{ id = "crow", name = "가면 까마귀", rarity = "Epic", price = 4000, income = 90 },
+	{ id = "turtle", name = "술독 거북", rarity = "Epic", price = 9000, income = 180 },
+	{ id = "fox", name = "구미호 점술가", rarity = "Legendary", price = 30000, income = 500 },
+	{ id = "drummer", name = "천둥 북잡이", rarity = "Legendary", price = 75000, income = 1100 },
+	{ id = "toad", name = "달 먹는 두꺼비", rarity = "Mythic", price = 400000, income = 5000 },
+	{ id = "nameless", name = "이름 없는 것", rarity = "Secret", price = 2500000, income = 30000 },
+}
+
+-- chance는 독립이 아니라 누적 구간으로 굴린다 (합이 1 미만, 나머지는 변이 없음)
+Config.MUTATIONS = {
+	{ id = "cursed", name = "저주", chance = 0.003, mult = 8, color = { 120, 0, 160 } },
+	{ id = "moon", name = "달빛", chance = 0.015, mult = 4, color = { 190, 220, 255 } },
+	{ id = "gold", name = "금박", chance = 0.05, mult = 2, color = { 255, 215, 0 } },
+}
+
+return Config
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="3">
+        <Properties>
+          <string name="Name">Economy</string>
+          <string name="Source"><![CDATA[-- Roblox API를 쓰지 않는 순수 계산 로직. tests/economy_test.luau 로 검증한다.
+local Config = require(script.Parent.Config)
+
+local Economy = {}
+
+local yokaiById = {}
+local yokaiByRarity = {}
+for _, def in Config.YOKAI do
+	yokaiById[def.id] = def
+	yokaiByRarity[def.rarity] = yokaiByRarity[def.rarity] or {}
+	table.insert(yokaiByRarity[def.rarity], def)
+end
+
+local mutationById = {}
+for _, mutation in Config.MUTATIONS do
+	mutationById[mutation.id] = mutation
+end
+
+function Economy.getYokai(id)
+	return yokaiById[id]
+end
+
+function Economy.getMutation(id)
+	return mutationById[id]
+end
+
+function Economy.yokaiOfRarity(rarity)
+	return yokaiByRarity[rarity]
+end
+
+local function mutationMult(mutationId)
+	local mutation = mutationId and mutationById[mutationId]
+	return mutation and mutation.mult or 1
+end
+
+function Economy.price(def, mutationId)
+	return def.price * mutationMult(mutationId)
+end
+
+function Economy.yokaiIncome(def, mutationId, level)
+	return def.income * mutationMult(mutationId) * Config.FUSE_INCOME_MULT ^ (level - 1)
+end
+
+function Economy.sellValue(def, mutationId, level)
+	return math.floor(Economy.price(def, mutationId) * Config.SELL_RATE * Config.FUSE_COUNT ^ (level - 1))
+end
+
+function Economy.rebirthMultiplier(rebirths)
+	return 1 + Config.REBIRTH_BONUS * rebirths
+end
+
+function Economy.rebirthCost(rebirths)
+	return Config.REBIRTH_BASE_COST * Config.REBIRTH_COST_GROWTH ^ rebirths
+end
+
+-- list: { { id, mutation, level } }
+function Economy.totalIncome(list, rebirths)
+	local sum = 0
+	for _, entry in list do
+		sum += Economy.yokaiIncome(yokaiById[entry.id], entry.mutation, entry.level)
+	end
+	return sum * Economy.rebirthMultiplier(rebirths)
+end
+
+-- roll: [0, 1) 난수. 가중치에 따라 등급 키를 돌려준다.
+function Economy.rollRarity(roll)
+	local total = 0
+	for _, key in Config.RARITY_ORDER do
+		total += Config.RARITIES[key].weight
+	end
+	local point = roll * total
+	local last
+	for _, key in Config.RARITY_ORDER do
+		local weight = Config.RARITIES[key].weight
+		if weight > 0 then
+			last = key
+			if point < weight then
+				return key
+			end
+			point -= weight
+		end
+	end
+	return last
+end
+
+-- roll: [0, 1) 난수. 변이 id 또는 nil.
+function Economy.rollMutation(roll)
+	local edge = 0
+	for _, mutation in Config.MUTATIONS do
+		edge += mutation.chance
+		if roll < edge then
+			return mutation.id
+		end
+	end
+	return nil
+end
+
+-- list: { { id, mutation, level } }
+-- 합성 가능한 같은 요괴 FUSE_COUNT 마리의 list 인덱스 배열을 돌려준다. 없으면 nil.
+function Economy.findFusable(list)
+	local groups = {}
+	for index, entry in list do
+		if entry.level < Config.MAX_LEVEL then
+			local key = entry.id .. "/" .. (entry.mutation or "") .. "/" .. entry.level
+			local group = groups[key]
+			if not group then
+				group = {}
+				groups[key] = group
+			end
+			table.insert(group, index)
+			if #group == Config.FUSE_COUNT then
+				return group
+			end
+		end
+	end
+	return nil
+end
+
+local SUFFIXES = { "", "K", "M", "B", "T" }
+
+function Economy.format(amount)
+	amount = math.floor(amount)
+	if amount < 1000 then
+		return tostring(amount)
+	end
+	local tier = math.min(#SUFFIXES - 1, math.floor(math.log10(amount) / 3))
+	local scaled = math.floor(amount / 1000 ^ tier * 10) / 10
+	return string.format("%.1f", scaled):gsub("%.0$", "") .. SUFFIXES[tier + 1]
+end
+
+return Economy
+]]></string>
+        </Properties>
+      </Item>
+    </Item>
+  </Item>
+  <Item class="ServerScriptService" referent="4">
+    <Properties>
+      <string name="Name">ServerScriptService</string>
+    </Properties>
+    <Item class="Folder" referent="5">
+      <Properties>
+        <string name="Name">Server</string>
+      </Properties>
+      <Item class="Script" referent="6">
+        <Properties>
+          <string name="Name">Main</string>
+          <token name="RunContext">0</token>
+          <string name="Source"><![CDATA[local CollectionService = game:GetService("CollectionService")
+local DataStoreService = game:GetService("DataStoreService")
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TweenService = game:GetService("TweenService")
+
+local Config = require(ReplicatedStorage.Shared.Config)
+local Economy = require(ReplicatedStorage.Shared.Economy)
+local World = require(script.Parent.World)
+
+local world = World.build()
+local plots = world.plots
+local rng = Random.new()
+local bellActive = false
+
+-- [Player] = { plot, rumor, rebirths, bounty, carrying, lastSwing, canSave, stats }
+local profiles = {}
+
+local remotes = Instance.new("Folder")
+remotes.Name = "Remotes"
+local function remote(name)
+	local event = Instance.new("RemoteEvent")
+	event.Name = name
+	event.Parent = remotes
+	return event
+end
+local announceRemote = remote("Announce") -- 서버 -> 클라: 안내 문구
+local knockbackRemote = remote("Knockback") -- 서버 -> 클라: 밀려나는 속도
+local rebirthRemote = remote("Rebirth") -- 클라 -> 서버
+local fuseRemote = remote("Fuse") -- 클라 -> 서버
+remotes.Parent = ReplicatedStorage
+
+local function notify(player, text)
+	announceRemote:FireClient(player, text)
+end
+
+local function rgb(c)
+	return Color3.fromRGB(c[1], c[2], c[3])
+end
+
+----------------------------------------------------------------------
+-- 요괴
+-- yokai = { def, mutation, level, part, label, prompt, plot, slot, carrier }
+----------------------------------------------------------------------
+
+local function refreshLabel(yokai)
+	local rarity = Config.RARITIES[yokai.def.rarity]
+	local mutation = Economy.getMutation(yokai.mutation)
+	local name = yokai.def.name
+	if mutation then
+		name = mutation.name .. " " .. name
+	end
+	if yokai.level > 1 then
+		name ..= " +" .. (yokai.level - 1)
+	end
+	local income = Economy.yokaiIncome(yokai.def, yokai.mutation, yokai.level)
+	yokai.label.Text = string.format("[%s] %s\n소문 %s/초", rarity.name, name, Economy.format(income))
+	yokai.label.TextColor3 = rgb(mutation and mutation.color or rarity.color)
+end
+
+local function createYokai(def, mutationId, level)
+	local rarity = Config.RARITIES[def.rarity]
+	local mutation = Economy.getMutation(mutationId)
+	local size = rarity.size + (level - 1) * 0.75
+
+	local part = Instance.new("Part")
+	part.Name = def.id
+	part.Shape = Enum.PartType.Ball
+	part.Size = Vector3.new(size, size, size)
+	part.Color = rgb(mutation and mutation.color or rarity.color)
+	part.Material = mutation and Enum.Material.Neon or Enum.Material.SmoothPlastic
+	part.Anchored = true
+	part.CanCollide = false
+
+	local yokai = {
+		def = def,
+		mutation = mutationId,
+		level = level,
+		part = part,
+		label = World.billboard(part, size / 2 + 1.5, 2.5),
+	}
+	refreshLabel(yokai)
+	return yokai
+end
+
+local function freeSlot(plot)
+	for slot = 1, Config.SLOTS do
+		if not plot.yokai[slot] then
+			return slot
+		end
+	end
+	return nil
+end
+
+local function slotCFrame(yokai)
+	return CFrame.new(yokai.plot.slots[yokai.slot] + Vector3.new(0, yokai.part.Size.Y / 2 + 0.1, 0))
+end
+
+local function isLocked(plot)
+	return not bellActive and os.clock() < plot.lockedUntil
+end
+
+-- 업혀 있던 요괴를 도둑에게서 떼어낸다 (어디에 놓을지는 호출한 쪽이 정한다)
+local function detach(yokai)
+	local thief = yokai.carrier
+	if not thief then
+		return
+	end
+	yokai.carrier = nil
+	local weld = yokai.part:FindFirstChildOfClass("WeldConstraint")
+	if weld then
+		weld:Destroy()
+	end
+	yokai.part.Anchored = true
+	local profile = profiles[thief]
+	if profile then
+		profile.carrying = nil
+	end
+	local humanoid = thief.Character and thief.Character:FindFirstChildOfClass("Humanoid")
+	if humanoid then
+		humanoid.WalkSpeed = Config.WALK_SPEED
+	end
+end
+
+-- 훔치다 실패: 원래 자리로 돌아간다
+local function returnYokai(yokai)
+	detach(yokai)
+	yokai.part.CFrame = slotCFrame(yokai)
+	yokai.prompt.Enabled = true
+end
+
+local function removeYokai(yokai)
+	detach(yokai)
+	yokai.plot.yokai[yokai.slot] = nil
+	yokai.part:Destroy()
+end
+
+local onPlacedPrompt
+
+local function placeYokai(plot, slot, yokai)
+	yokai.plot = plot
+	yokai.slot = slot
+	plot.yokai[slot] = yokai
+
+	local part = yokai.part
+	part.Anchored = true
+	part.CFrame = slotCFrame(yokai)
+	part:SetAttribute("OwnerId", plot.owner.UserId)
+	CollectionService:AddTag(part, "PlacedYokai")
+
+	if not yokai.prompt then
+		local prompt = Instance.new("ProximityPrompt")
+		prompt.ActionText = "훔치기" -- 주인에게는 클라이언트가 "판매"로 바꿔 보여준다
+		prompt.ObjectText = yokai.def.name
+		prompt.HoldDuration = Config.STEAL_HOLD
+		prompt.MaxActivationDistance = 9
+		prompt.RequiresLineOfSight = false
+		prompt.Triggered:Connect(function(player)
+			onPlacedPrompt(yokai, player)
+		end)
+		prompt.Parent = part
+		yokai.prompt = prompt
+	end
+	yokai.prompt.Enabled = true
+	part.Parent = world.folder
+end
+
+local function steal(yokai, player, profile)
+	local character = player.Character
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	if not root or not humanoid or humanoid.Health <= 0 or profile.carrying then
+		return
+	end
+	if isLocked(yokai.plot) then
+		notify(player, "결계가 쳐져 있다!")
+		return
+	end
+
+	yokai.carrier = player
+	profile.carrying = yokai
+	yokai.prompt.Enabled = false
+
+	local part = yokai.part
+	part.Massless = true
+	part.CFrame = root.CFrame * CFrame.new(0, 1, part.Size.Z / 2 + 1)
+	local weld = Instance.new("WeldConstraint")
+	weld.Part0 = root
+	weld.Part1 = part
+	weld.Parent = part
+	part.Anchored = false
+
+	humanoid.WalkSpeed = Config.WALK_SPEED * Config.RARITIES[yokai.def.rarity].carrySpeed
+	notify(yokai.plot.owner, player.DisplayName .. " 이(가) " .. yokai.def.name .. " 을(를) 훔쳐가는 중!")
+end
+
+function onPlacedPrompt(yokai, player)
+	local profile = profiles[player]
+	if not profile or yokai.carrier or yokai.part.Parent == nil then
+		return
+	end
+	if yokai.plot == profile.plot then
+		profile.rumor += Economy.sellValue(yokai.def, yokai.mutation, yokai.level)
+		removeYokai(yokai)
+	else
+		steal(yokai, player, profile)
+	end
+end
+
+-- 도둑이 자기 좌판에 도착했다
+local function deliver(yokai, thief, profile)
+	local slot = freeSlot(profile.plot)
+	if not slot then
+		returnYokai(yokai)
+		notify(thief, "좌판에 빈자리가 없어 요괴가 돌아갔다.")
+		return
+	end
+	local victim = yokai.plot.owner
+	detach(yokai)
+	yokai.plot.yokai[yokai.slot] = nil
+	placeYokai(profile.plot, slot, yokai)
+
+	profile.bounty += math.floor(Economy.price(yokai.def, yokai.mutation) * Config.BOUNTY_RATE)
+	notify(thief, yokai.def.name .. " 을(를) 훔쳤다!")
+	notify(victim, thief.DisplayName .. " 에게 " .. yokai.def.name .. " 을(를) 빼앗겼다...")
+end
+
+----------------------------------------------------------------------
+-- 골목: 요괴가 지나가고, 소문을 내면 영입된다
+----------------------------------------------------------------------
+
+local function spawnWalker(rarityKey)
+	local pool = Economy.yokaiOfRarity(rarityKey)
+	local def = pool[rng:NextInteger(1, #pool)]
+	local mutationId = Economy.rollMutation(rng:NextNumber())
+	local price = Economy.price(def, mutationId)
+	local yokai = createYokai(def, mutationId, 1)
+	local part = yokai.part
+	local height = Vector3.new(0, part.Size.Y / 2 + 0.2, 0)
+	part.CFrame = CFrame.new(world.alleyStart + height)
+
+	local prompt = Instance.new("ProximityPrompt")
+	prompt.ActionText = "영입"
+	prompt.ObjectText = "소문 " .. Economy.format(price)
+	prompt.HoldDuration = 0.25
+	prompt.MaxActivationDistance = 12
+	prompt.RequiresLineOfSight = false
+	prompt.Parent = part
+
+	local distance = (world.alleyEnd - world.alleyStart).Magnitude
+	local tween = TweenService:Create(
+		part,
+		TweenInfo.new(distance / Config.WALKER_SPEED, Enum.EasingStyle.Linear),
+		{ CFrame = CFrame.new(world.alleyEnd + height) }
+	)
+	tween.Completed:Connect(function(state)
+		if state == Enum.PlaybackState.Completed then
+			part:Destroy()
+		end
+	end)
+
+	prompt.Triggered:Connect(function(player)
+		local profile = profiles[player]
+		if not profile or yokai.plot then
+			return
+		end
+		local rarity = Config.RARITIES[def.rarity]
+		if profile.rebirths < rarity.minRebirth then
+			notify(player, string.format("%s 등급은 환생 %d회부터 영입할 수 있다.", rarity.name, rarity.minRebirth))
+			return
+		end
+		if profile.rumor < price then
+			notify(player, "소문이 부족하다.")
+			return
+		end
+		local slot = freeSlot(profile.plot)
+		if not slot then
+			notify(player, "좌판에 빈자리가 없다. 요괴를 팔거나 합성하자.")
+			return
+		end
+		profile.rumor -= price
+		tween:Cancel()
+		prompt:Destroy()
+		placeYokai(profile.plot, slot, yokai)
+	end)
+
+	part.Parent = world.folder
+	tween:Play()
+	return yokai
+end
+
+task.spawn(function()
+	while true do
+		task.wait(Config.SPAWN_INTERVAL)
+		spawnWalker(Economy.rollRarity(rng:NextNumber()))
+	end
+end)
+
+----------------------------------------------------------------------
+-- 결계와 새벽 종
+----------------------------------------------------------------------
+
+for _, plot in plots do
+	plot.lockPad.Touched:Connect(function(hit)
+		local player = Players:GetPlayerFromCharacter(hit.Parent)
+		local now = os.clock()
+		if player == nil or player ~= plot.owner or bellActive or now < plot.lockReadyAt then
+			return
+		end
+		plot.lockedUntil = now + Config.LOCK_DURATION
+		plot.lockReadyAt = now + Config.LOCK_COOLDOWN
+	end)
+end
+
+local function refreshLock(plot)
+	local now = os.clock()
+	local locked = isLocked(plot)
+	plot.dome.Transparency = locked and 0.5 or 1
+	if not plot.owner then
+		plot.lockLabel.Text = ""
+	elseif bellActive then
+		plot.lockLabel.Text = "새벽 종! 결계 해제"
+	elseif locked then
+		plot.lockLabel.Text = string.format("결계 %d초", math.ceil(plot.lockedUntil - now))
+	elseif now < plot.lockReadyAt then
+		plot.lockLabel.Text = string.format("빈틈! 재충전 %d초", math.ceil(plot.lockReadyAt - now))
+	else
+		plot.lockLabel.Text = "밟아서 결계 치기"
+	end
+end
+
+local function scheduleBell()
+	workspace:SetAttribute("BellActive", bellActive)
+	workspace:SetAttribute(
+		"BellChangeAt",
+		workspace:GetServerTimeNow() + (bellActive and Config.BELL_DURATION or Config.BELL_INTERVAL)
+	)
+end
+
+task.spawn(function()
+	while true do
+		scheduleBell()
+		task.wait(Config.BELL_INTERVAL)
+
+		bellActive = true
+		scheduleBell()
+		for _, plot in plots do
+			plot.lockedUntil = 0
+			plot.lockReadyAt = 0
+		end
+		spawnWalker(Config.BELL_RARITY)
+		announceRemote:FireAllClients("새벽 종이 울린다! 모든 결계가 풀렸다!")
+		task.wait(Config.BELL_DURATION)
+
+		bellActive = false
+		announceRemote:FireAllClients("종소리가 멎었다. 결계를 다시 칠 수 있다.")
+	end
+end)
+
+----------------------------------------------------------------------
+-- 부채: 때리면 밀려나고, 업고 있던 요괴를 떨어뜨린다
+----------------------------------------------------------------------
+
+local function swing(attacker)
+	local profile = profiles[attacker]
+	local root = attacker.Character and attacker.Character:FindFirstChild("HumanoidRootPart")
+	local now = os.clock()
+	if not profile or not root or now - profile.lastSwing < Config.FAN_COOLDOWN then
+		return
+	end
+	profile.lastSwing = now
+
+	for victim, victimProfile in profiles do
+		local victimRoot = victim.Character and victim.Character:FindFirstChild("HumanoidRootPart")
+		if victim ~= attacker and victimRoot then
+			local offset = victimRoot.Position - root.Position
+			if offset.Magnitude <= Config.FAN_RANGE and offset:Dot(root.CFrame.LookVector) > 0 then
+				local direction = Vector3.new(offset.X, 0, offset.Z)
+				if direction.Magnitude > 0 then
+					direction = direction.Unit
+				end
+				-- 캐릭터 물리는 그 플레이어의 클라이언트가 소유하므로 클라이언트에서 적용한다
+				knockbackRemote:FireClient(victim, direction * Config.KNOCKBACK + Vector3.new(0, 30, 0))
+
+				if victimProfile.carrying then
+					local yokai = victimProfile.carrying
+					returnYokai(yokai)
+					notify(victim, "얻어맞아 요괴를 놓쳤다!")
+					notify(yokai.plot.owner, yokai.def.name .. " 이(가) 좌판으로 돌아왔다.")
+				end
+				if victimProfile.bounty > 0 then
+					profile.rumor += victimProfile.bounty
+					announceRemote:FireAllClients(
+						string.format(
+							"%s 이(가) %s 의 현상금 %s 을(를) 챙겼다!",
+							attacker.DisplayName,
+							victim.DisplayName,
+							Economy.format(victimProfile.bounty)
+						)
+					)
+					victimProfile.bounty = 0
+				end
+			end
+		end
+	end
+end
+
+local function giveFan(player)
+	local tool = Instance.new("Tool")
+	tool.Name = "부채"
+	tool.CanBeDropped = false
+	local handle = Instance.new("Part")
+	handle.Name = "Handle"
+	handle.Size = Vector3.new(0.3, 2.5, 1.5)
+	handle.Color = Color3.fromRGB(230, 60, 60)
+	handle.Parent = tool
+	tool.Activated:Connect(function()
+		swing(player)
+	end)
+	tool.Parent = player:WaitForChild("Backpack")
+end
+
+----------------------------------------------------------------------
+-- 환생 / 합성
+----------------------------------------------------------------------
+
+local function clearPlot(plot)
+	for _, yokai in plot.yokai do
+		detach(yokai)
+		yokai.part:Destroy()
+	end
+	plot.yokai = {}
+end
+
+rebirthRemote.OnServerEvent:Connect(function(player)
+	local profile = profiles[player]
+	if not profile then
+		return
+	end
+	local cost = Economy.rebirthCost(profile.rebirths)
+	if profile.rumor < cost then
+		notify(player, "환생하려면 소문 " .. Economy.format(cost) .. " 이(가) 필요하다.")
+		return
+	end
+	if profile.carrying then
+		returnYokai(profile.carrying)
+	end
+	clearPlot(profile.plot)
+	profile.rumor = Config.START_RUMOR
+	profile.bounty = 0
+	profile.rebirths += 1
+	announceRemote:FireAllClients(
+		string.format("%s 이(가) %d번째 환생을 했다!", player.DisplayName, profile.rebirths)
+	)
+end)
+
+fuseRemote.OnServerEvent:Connect(function(player)
+	local profile = profiles[player]
+	if not profile then
+		return
+	end
+	local fused = 0
+	while true do
+		-- 업혀 가는 중인 요괴는 합성 대상에서 뺀다
+		local list = {}
+		for _, yokai in profile.plot.yokai do
+			if not yokai.carrier then
+				table.insert(list, yokai)
+			end
+		end
+		local group = Economy.findFusable(list)
+		if not group then
+			break
+		end
+		local keep = list[group[1]]
+		for i = 2, #group do
+			removeYokai(list[group[i]])
+		end
+		keep.level += 1
+		local size = Config.RARITIES[keep.def.rarity].size + (keep.level - 1) * 0.75
+		keep.part.Size = Vector3.new(size, size, size)
+		keep.part.CFrame = slotCFrame(keep)
+		keep.label.Parent.StudsOffset = Vector3.new(0, size / 2 + 1.5, 0)
+		refreshLabel(keep)
+		fused += 1
+	end
+	notify(player, fused > 0 and ("합성 " .. fused .. "회 완료!") or "합성할 수 있는 요괴가 없다. (같은 요괴 3마리)")
+end)
+
+----------------------------------------------------------------------
+-- 저장
+----------------------------------------------------------------------
+
+local storeOk, store = pcall(function()
+	return DataStoreService:GetDataStore("YokaiMarketV1")
+end)
+if not storeOk then
+	warn("DataStore를 쓸 수 없어 저장이 꺼집니다:", store)
+end
+
+-- 성공하면 (true, data 또는 nil), 실패하면 (false)
+local function loadData(player)
+	if not storeOk then
+		return false
+	end
+	local ok, data = pcall(function()
+		return store:GetAsync("u" .. player.UserId)
+	end)
+	if not ok then
+		warn("불러오기 실패:", player.Name, data)
+	end
+	return ok, ok and data or nil
+end
+
+local function saveData(player, profile)
+	-- 불러오기에 실패한 플레이어는 저장하지 않는다 (기존 데이터를 덮어쓰지 않기 위해)
+	if not profile.canSave then
+		return
+	end
+	local list = {}
+	for _, yokai in profile.plot.yokai do
+		table.insert(list, { id = yokai.def.id, mutation = yokai.mutation, level = yokai.level })
+	end
+	local ok, err = pcall(function()
+		store:SetAsync("u" .. player.UserId, {
+			rumor = profile.rumor,
+			rebirths = profile.rebirths,
+			yokai = list,
+		})
+	end)
+	if not ok then
+		warn("저장 실패:", player.Name, err)
+	end
+end
+
+----------------------------------------------------------------------
+-- 플레이어
+----------------------------------------------------------------------
+
+local function onCharacter(player, character)
+	local profile = profiles[player]
+	if not profile then
+		return
+	end
+	local humanoid = character:WaitForChild("Humanoid")
+	local root = character:WaitForChild("HumanoidRootPart")
+	humanoid.WalkSpeed = Config.WALK_SPEED
+	humanoid.Died:Connect(function()
+		if profile.carrying then
+			returnYokai(profile.carrying)
+		end
+	end)
+
+	local bounty = World.billboard(character:WaitForChild("Head"), 3.5, 1.2)
+	bounty.Name = "BountyLabel"
+	bounty.TextColor3 = Color3.fromRGB(255, 90, 90)
+	bounty.Text = ""
+
+	giveFan(player)
+	task.defer(function()
+		root.CFrame = CFrame.new(profile.plot.lockPad.Position + Vector3.new(0, 4, 0))
+	end)
+end
+
+local function onPlayerAdded(player)
+	local plot
+	for _, candidate in plots do
+		if not candidate.owner then
+			plot = candidate
+			break
+		end
+	end
+	if not plot then
+		player:Kick("야시장이 가득 찼습니다. 다른 서버로 접속해 주세요.")
+		return
+	end
+	plot.owner = player
+	plot.sign.Text = player.DisplayName .. " 의 좌판"
+
+	local loaded, data = loadData(player)
+	if player.Parent == nil then
+		plot.owner = nil
+		plot.sign.Text = "빈 좌판"
+		return
+	end
+
+	local stats = Instance.new("Folder")
+	stats.Name = "leaderstats"
+	local rumorStat = Instance.new("NumberValue")
+	rumorStat.Name = "소문"
+	rumorStat.Parent = stats
+	local rebirthStat = Instance.new("IntValue")
+	rebirthStat.Name = "환생"
+	rebirthStat.Parent = stats
+	stats.Parent = player
+
+	local profile = {
+		plot = plot,
+		rumor = data and data.rumor or Config.START_RUMOR,
+		rebirths = data and data.rebirths or 0,
+		bounty = 0,
+		carrying = nil,
+		lastSwing = 0,
+		canSave = loaded,
+		rumorStat = rumorStat,
+		rebirthStat = rebirthStat,
+	}
+	profiles[player] = profile
+
+	if data and data.yokai then
+		for slot, saved in data.yokai do
+			local def = Economy.getYokai(saved.id)
+			if def and slot <= Config.SLOTS then
+				placeYokai(plot, slot, createYokai(def, saved.mutation, saved.level))
+			end
+		end
+	end
+
+	player.CharacterAdded:Connect(function(character)
+		onCharacter(player, character)
+	end)
+	if player.Character then
+		onCharacter(player, player.Character)
+	end
+end
+
+local function onPlayerRemoving(player)
+	local profile = profiles[player]
+	if not profile then
+		return
+	end
+	if profile.carrying then
+		returnYokai(profile.carrying)
+	end
+	-- 남이 업고 가던 내 요괴도 저장 전에 되돌린다
+	for _, yokai in profile.plot.yokai do
+		if yokai.carrier then
+			returnYokai(yokai)
+		end
+	end
+	profiles[player] = nil
+	saveData(player, profile)
+	clearPlot(profile.plot)
+	profile.plot.owner = nil
+	profile.plot.sign.Text = "빈 좌판"
+	profile.plot.lockedUntil = 0
+	profile.plot.lockReadyAt = 0
+end
+
+Players.PlayerAdded:Connect(onPlayerAdded)
+Players.PlayerRemoving:Connect(onPlayerRemoving)
+for _, player in Players:GetPlayers() do
+	task.spawn(onPlayerAdded, player)
+end
+
+game:BindToClose(function()
+	for player, profile in profiles do
+		saveData(player, profile)
+	end
+end)
+
+task.spawn(function()
+	while true do
+		task.wait(Config.AUTOSAVE_INTERVAL)
+		for player, profile in profiles do
+			task.spawn(saveData, player, profile)
+		end
+	end
+end)
+
+----------------------------------------------------------------------
+-- 메인 루프: 수익 지급(1초), 훔친 요괴 도착 판정(0.2초)
+----------------------------------------------------------------------
+
+local function tickIncome()
+	for player, profile in profiles do
+		local earning = {}
+		for _, yokai in profile.plot.yokai do
+			if not yokai.carrier then
+				table.insert(earning, { id = yokai.def.id, mutation = yokai.mutation, level = yokai.level })
+			end
+		end
+		local income = Economy.totalIncome(earning, profile.rebirths)
+		profile.rumor += income
+
+		profile.rumorStat.Value = math.floor(profile.rumor)
+		profile.rebirthStat.Value = profile.rebirths
+		player:SetAttribute("Rumor", profile.rumor)
+		player:SetAttribute("Income", income)
+		player:SetAttribute("Bounty", profile.bounty)
+		player:SetAttribute("Rebirths", profile.rebirths)
+
+		local head = player.Character and player.Character:FindFirstChild("Head")
+		local gui = head and head:FindFirstChildOfClass("BillboardGui")
+		if gui then
+			gui.BountyLabel.Text = profile.bounty > 0 and ("현상금 " .. Economy.format(profile.bounty)) or ""
+		end
+	end
+	for _, plot in plots do
+		refreshLock(plot)
+	end
+end
+
+task.spawn(function()
+	local elapsed = 0
+	while true do
+		elapsed += task.wait(0.2)
+		for player, profile in profiles do
+			local yokai = profile.carrying
+			local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+			if yokai and root then
+				if root.Position.Y < -20 then
+					returnYokai(yokai) -- 옥상 밖으로 떨어지면 요괴가 같이 삭제되기 전에 되돌린다
+				elseif World.inPlot(profile.plot, root.Position) then
+					deliver(yokai, player, profile)
+				end
+			end
+		end
+		if elapsed >= 1 then
+			elapsed -= 1
+			tickIncome()
+		end
+	end
+end)
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="7">
+        <Properties>
+          <string name="Name">World</string>
+          <string name="Source"><![CDATA[-- 맵을 코드로 만든다. 에셋 없이 빈 플레이스에서 바로 돌아가게 하기 위함.
+local Lighting = game:GetService("Lighting")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Config = require(ReplicatedStorage.Shared.Config)
+
+local World = {}
+
+local PLOT_SIZE = Vector3.new(44, 1, 30)
+local PLOT_SPACING = 60
+local PLOT_DISTANCE = 45 -- 골목 중심에서 좌판 중심까지
+local ALLEY_HALF_LENGTH = 140
+
+local function part(props)
+	local p = Instance.new("Part")
+	p.Anchored = true
+	p.TopSurface = Enum.SurfaceType.Smooth
+	p.BottomSurface = Enum.SurfaceType.Smooth
+	for key, value in props do
+		p[key] = value
+	end
+	p.Parent = props.Parent or workspace
+	return p
+end
+
+-- 파트 위에 떠 있는 글자. TextLabel을 돌려준다.
+function World.billboard(parent, offsetY, height)
+	local gui = Instance.new("BillboardGui")
+	gui.Size = UDim2.fromScale(12, height or 2)
+	gui.StudsOffset = Vector3.new(0, offsetY, 0)
+	gui.MaxDistance = 120
+	local label = Instance.new("TextLabel")
+	label.Size = UDim2.fromScale(1, 1)
+	label.BackgroundTransparency = 1
+	label.TextScaled = true
+	label.Font = Enum.Font.GothamBold
+	label.TextColor3 = Color3.new(1, 1, 1)
+	label.TextStrokeTransparency = 0.3
+	label.Parent = gui
+	gui.Parent = parent
+	return label
+end
+
+local function buildPlot(index, folder)
+	local side = index % 2 == 1 and -1 or 1
+	local column = math.ceil(index / 2)
+	local columns = Config.PLOT_COUNT / 2
+	local center = Vector3.new((column - (columns + 1) / 2) * PLOT_SPACING, 0.5, side * PLOT_DISTANCE)
+
+	part({
+		Name = "Floor",
+		Size = PLOT_SIZE,
+		Position = center,
+		Color = Color3.fromRGB(70, 45, 35),
+		Material = Enum.Material.WoodPlanks,
+		Parent = folder,
+	})
+
+	-- 5칸씩 여러 줄, 골목에서 먼 쪽으로 쌓는다
+	local slots = {}
+	for i = 1, Config.SLOTS do
+		local col = (i - 1) % 5
+		local row = math.floor((i - 1) / 5)
+		local position = center + Vector3.new((col - 2) * 8, 0.6, side * (2 + row * 8))
+		part({
+			Name = "Slot",
+			Size = Vector3.new(5, 0.2, 5),
+			Position = position,
+			Color = Color3.fromRGB(40, 30, 25),
+			Parent = folder,
+		})
+		slots[i] = position
+	end
+
+	local lockPad = part({
+		Name = "LockPad",
+		Size = Vector3.new(6, 0.2, 6),
+		Position = center + Vector3.new(0, 0.6, -side * 11),
+		Color = Color3.fromRGB(200, 40, 40),
+		Material = Enum.Material.Neon,
+		Parent = folder,
+	})
+
+	local dome = part({
+		Name = "Barrier",
+		Size = Vector3.new(PLOT_SIZE.X, 14, PLOT_SIZE.Z),
+		Position = center + Vector3.new(0, 7.5, 0),
+		Color = Color3.fromRGB(255, 80, 80),
+		Material = Enum.Material.ForceField,
+		Transparency = 1,
+		CanCollide = false,
+		CanQuery = false,
+		CanTouch = false,
+		Parent = folder,
+	})
+
+	local signPost = part({
+		Name = "Sign",
+		Size = Vector3.new(1, 10, 1),
+		Position = center + Vector3.new(0, 5.5, side * (PLOT_SIZE.Z / 2 - 0.5)),
+		Color = Color3.fromRGB(120, 30, 30),
+		Parent = folder,
+	})
+	local lantern = Instance.new("PointLight")
+	lantern.Color = Color3.fromRGB(255, 170, 90)
+	lantern.Range = 40
+	lantern.Brightness = 2
+	lantern.Parent = signPost
+
+	local sign = World.billboard(signPost, 7, 3)
+	sign.Text = "빈 좌판"
+
+	return {
+		index = index,
+		center = center,
+		slots = slots,
+		lockPad = lockPad,
+		lockLabel = World.billboard(lockPad, 3, 1.5),
+		dome = dome,
+		sign = sign,
+		owner = nil,
+		yokai = {}, -- [slot] = yokai
+		lockedUntil = 0,
+		lockReadyAt = 0,
+	}
+end
+
+function World.inPlot(plot, position)
+	return math.abs(position.X - plot.center.X) <= PLOT_SIZE.X / 2
+		and math.abs(position.Z - plot.center.Z) <= PLOT_SIZE.Z / 2
+end
+
+function World.build()
+	Lighting.ClockTime = 0
+	Lighting.Brightness = 1
+	Lighting.Ambient = Color3.fromRGB(70, 70, 110)
+	Lighting.OutdoorAmbient = Color3.fromRGB(60, 60, 100)
+
+	local folder = Instance.new("Folder")
+	folder.Name = "NightMarket"
+	folder.Parent = workspace
+
+	part({
+		Name = "Rooftop",
+		Size = Vector3.new(400, 4, 400),
+		Position = Vector3.new(0, -2, 0),
+		Color = Color3.fromRGB(35, 35, 45),
+		Material = Enum.Material.Concrete,
+		Parent = folder,
+	})
+	part({
+		Name = "Alley",
+		Size = Vector3.new(ALLEY_HALF_LENGTH * 2, 0.2, 8),
+		Position = Vector3.new(0, 0.1, 0),
+		Color = Color3.fromRGB(255, 200, 120),
+		Material = Enum.Material.Neon,
+		Transparency = 0.6,
+		Parent = folder,
+	})
+
+	local spawn = Instance.new("SpawnLocation")
+	spawn.Anchored = true
+	spawn.Size = Vector3.new(8, 1, 8)
+	spawn.Position = Vector3.new(0, 0.5, 14)
+	spawn.Transparency = 1
+	spawn.CanCollide = false
+	spawn.Parent = folder
+
+	local plots = {}
+	for index = 1, Config.PLOT_COUNT do
+		plots[index] = buildPlot(index, folder)
+	end
+
+	return {
+		folder = folder,
+		plots = plots,
+		alleyStart = Vector3.new(-ALLEY_HALF_LENGTH, 0, 0),
+		alleyEnd = Vector3.new(ALLEY_HALF_LENGTH, 0, 0),
+	}
+end
+
+return World
+]]></string>
+        </Properties>
+      </Item>
+    </Item>
+  </Item>
+  <Item class="StarterPlayer" referent="8">
+    <Properties>
+      <string name="Name">StarterPlayer</string>
+    </Properties>
+    <Item class="StarterPlayerScripts" referent="9">
+      <Properties>
+        <string name="Name">StarterPlayerScripts</string>
+      </Properties>
+      <Item class="Folder" referent="10">
+        <Properties>
+          <string name="Name">Client</string>
+        </Properties>
+        <Item class="LocalScript" referent="11">
+          <Properties>
+            <string name="Name">Hud</string>
+            <string name="Source"><![CDATA[local CollectionService = game:GetService("CollectionService")
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Economy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Economy"))
+local remotes = ReplicatedStorage:WaitForChild("Remotes")
+local player = Players.LocalPlayer
+
+local gui = Instance.new("ScreenGui")
+gui.Name = "Hud"
+gui.ResetOnSpawn = false
+
+local function label(position, size)
+	local l = Instance.new("TextLabel")
+	l.AnchorPoint = Vector2.new(0.5, 0)
+	l.Position = position
+	l.Size = size
+	l.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
+	l.BackgroundTransparency = 0.3
+	l.TextColor3 = Color3.new(1, 1, 1)
+	l.Font = Enum.Font.GothamBold
+	l.TextScaled = true
+	l.Text = ""
+	l.Parent = gui
+	return l
+end
+
+local function button(order, color)
+	local b = Instance.new("TextButton")
+	b.AnchorPoint = Vector2.new(1, 0.5)
+	b.Position = UDim2.new(1, -12, 0.5, (order - 1) * 60)
+	b.Size = UDim2.fromOffset(170, 50)
+	b.BackgroundColor3 = color
+	b.TextColor3 = Color3.new(1, 1, 1)
+	b.Font = Enum.Font.GothamBold
+	b.TextScaled = true
+	b.Parent = gui
+	return b
+end
+
+local bellLabel = label(UDim2.new(0.5, 0, 0, 8), UDim2.fromOffset(320, 34))
+local announceLabel = label(UDim2.new(0.5, 0, 0, 50), UDim2.fromOffset(520, 40))
+local statsLabel = label(UDim2.new(0.5, 0, 1, -110), UDim2.fromOffset(460, 40))
+announceLabel.Visible = false
+
+local rebirthButton = button(1, Color3.fromRGB(150, 60, 200))
+local fuseButton = button(2, Color3.fromRGB(40, 130, 90))
+fuseButton.Text = "합성 (같은 요괴 3마리)"
+
+rebirthButton.Activated:Connect(function()
+	remotes.Rebirth:FireServer()
+end)
+fuseButton.Activated:Connect(function()
+	remotes.Fuse:FireServer()
+end)
+
+gui.Parent = player:WaitForChild("PlayerGui")
+
+-- 안내 문구
+local announceToken = 0
+remotes.Announce.OnClientEvent:Connect(function(text)
+	announceToken += 1
+	local token = announceToken
+	announceLabel.Text = text
+	announceLabel.Visible = true
+	task.wait(4)
+	if token == announceToken then
+		announceLabel.Visible = false
+	end
+end)
+
+-- 부채에 맞았을 때 밀려나기
+remotes.Knockback.OnClientEvent:Connect(function(velocity)
+	local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+	if root then
+		root.AssemblyLinearVelocity = velocity
+	end
+end)
+
+-- 내 요괴의 프롬프트는 "판매", 남의 요괴는 "훔치기"
+local function watchYokai(part)
+	local function refresh()
+		local prompt = part:FindFirstChildOfClass("ProximityPrompt")
+		if prompt then
+			local mine = part:GetAttribute("OwnerId") == player.UserId
+			prompt.ActionText = mine and "판매" or "훔치기"
+		end
+	end
+	part:GetAttributeChangedSignal("OwnerId"):Connect(refresh)
+	part.ChildAdded:Connect(refresh)
+	refresh()
+end
+CollectionService:GetInstanceAddedSignal("PlacedYokai"):Connect(watchYokai)
+for _, part in CollectionService:GetTagged("PlacedYokai") do
+	watchYokai(part)
+end
+
+while true do
+	local rumor = player:GetAttribute("Rumor") or 0
+	local income = player:GetAttribute("Income") or 0
+	local bounty = player:GetAttribute("Bounty") or 0
+	local rebirths = player:GetAttribute("Rebirths") or 0
+
+	local text = string.format("소문 %s (+%s/초)", Economy.format(rumor), Economy.format(income))
+	if bounty > 0 then
+		text ..= " · 현상금 " .. Economy.format(bounty)
+	end
+	statsLabel.Text = text
+	rebirthButton.Text = "환생 (소문 " .. Economy.format(Economy.rebirthCost(rebirths)) .. ")"
+
+	local remaining = math.max(0, math.floor((workspace:GetAttribute("BellChangeAt") or 0) - workspace:GetServerTimeNow()))
+	local clock = string.format("%d:%02d", remaining // 60, remaining % 60)
+	if workspace:GetAttribute("BellActive") then
+		bellLabel.Text = "새벽 종! 결계 해제 " .. clock
+	else
+		bellLabel.Text = "새벽 종까지 " .. clock
+	end
+
+	task.wait(0.25)
+end
+]]></string>
+          </Properties>
+        </Item>
+      </Item>
+    </Item>
+  </Item>
+</roblox>
